@@ -61,7 +61,7 @@ describe("GameSinglePlayer", function () {
       const encryptedMove = await input.encrypt();
 
       const tx = await game.connect(player1).move(encryptedMove.handles[0], encryptedMove.inputProof);
-      const receipt = await tx.wait();
+      await tx.wait();
 
       // Check that both player and computer moves were made
       expect(await game.player1HasMoved(1)).to.equal(true);
