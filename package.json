@@ -1,13 +1,9 @@
 {
-  "name": "@zama-ai/fhevm-hardhat-template",
-  "description": "fhEVM hardhat template",
-  "version": "1.0.0",
+  "name": "rock-paper-scissors",
+  "description": "Privacy-first on-chain Rock Paper Scissors game",
+  "version": "0.1.0",
   "engines": {
-    "node": ">=20.0.0"
-  },
-  "author": {
-    "name": "zama-ai",
-    "url": "https://github.com/zama-ai"
+    "node": ">=18.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
@@ -53,7 +49,6 @@
     "solhint": "^3.4.0",
     "solhint-plugin-prettier": "^0.0.5",
     "solidity-coverage": "0.8.12",
-    "sqlite3": "^5.1.7",
     "ts-generator": "^0.1.1",
     "ts-node": "^10.9.1",
     "typechain": "^8.2.0",
@@ -90,10 +85,22 @@
     "prettier:write": "prettier --write \"**/*.{js,json,md,sol,ts,yml}\"",
     "typechain": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat typechain",
     "test": "hardhat test --network hardhat",
+    "test:game": "hardhat test test/game/Game.ts",
     "coverage": "hardhat coverage",
     "deploy-sepolia": "hardhat deploy --network sepolia"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.2"
+    "@openzeppelin/contracts": "^5.0.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "8.7.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "bigint-buffer",
+      "keccak",
+      "secp256k1",
+      "sqlite3"
+    ]
   }
 }

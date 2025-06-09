@@ -1,7 +1,7 @@
+import Database from "better-sqlite3";
 import { log2 } from "extra-bigint";
 import { ethers } from "hardhat";
 import hre from "hardhat";
-import { Database } from "sqlite3";
 
 import { TFHEEXECUTOR_ADDRESS } from "./constants";
 import operatorPrices from "./operatorPrices.json";
@@ -17,12 +17,19 @@ let counterRand = 0;
 //const db = new Database('./sql.db'); // on-disk db for debugging
 const db = new Database(":memory:");
 
+interface CiphertextRow {
+  handle: string;
+  clearText: string;
+}
+
 export function insertSQL(handle: string, clearText: bigint, replace: boolean = false) {
   if (replace) {
-    // this is useful if using snapshots while sampling different random numbers on each revert
-    db.run("INSERT OR REPLACE INTO ciphertexts (handle, clearText) VALUES (?, ?)", [handle, clearText.toString()]);
+    db.prepare("INSERT OR REPLACE INTO ciphertexts (handle, clearText) VALUES (?, ?)").run(
+      handle,
+      clearText.toString(),
+    );
   } else {
-    db.run("INSERT OR IGNORE INTO ciphertexts (handle, clearText) VALUES (?, ?)", [handle, clearText.toString()]);
+    db.prepare("INSERT OR IGNORE INTO ciphertexts (handle, clearText) VALUES (?, ?)").run(handle, clearText.toString());
   }
 }
 
@@ -36,25 +43,28 @@ export const getClearText = async (handle: bigint): Promise<string> => {
     const maxRetries = 100;
 
     function executeQuery() {
-      db.get("SELECT clearText FROM ciphertexts WHERE handle = ?", [handleStr], (err, row) => {
-        if (err) {
-          reject(new Error(`Error querying database: ${err.message}`));
-        } else if (row) {
+      try {
+        const row = db.prepare("SELECT clearText FROM ciphertexts WHERE handle = ?").get(handleStr) as
+          | CiphertextRow
+          | undefined;
+        if (row) {
           resolve(row.clearText);
         } else if (attempts < maxRetries) {
           attempts++;
-          executeQuery();
+          setTimeout(executeQuery, 100);
         } else {
           reject(new Error("No record found after maximum retries"));
         }
-      });
+      } catch (err) {
+        reject(new Error(`Error querying database: ${(err as Error).message}`));
+      }
     }
 
     executeQuery();
   });
 };
 
-db.serialize(() => db.run("CREATE TABLE IF NOT EXISTS ciphertexts (handle BINARY PRIMARY KEY,clearText TEXT)"));
+db.exec("CREATE TABLE IF NOT EXISTS ciphertexts (handle BINARY PRIMARY KEY,clearText TEXT)");
 
 interface FHEVMEvent {
   eventName: string;

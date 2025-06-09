@@ -73,11 +73,13 @@ describe("ConfidentialERC20", function () {
     // on the other hand, Bob should be unable to read Alice's balance
     await expect(
       reencryptEuint64(this.signers.bob, this.fhevm, balanceHandleAlice, this.contractAddress),
+      // @ts-expect-error - rejectedWith can be used here
     ).to.be.rejectedWith("User is not authorized to reencrypt this handle!");
 
     // and should be impossible to call reencrypt if contractAddress === userAddress
     await expect(
       reencryptEuint64(this.signers.alice, this.fhevm, balanceHandleAlice, this.signers.alice.address),
+      // @ts-expect-error - rejectedWith can be used here
     ).to.be.rejectedWith("userAddress should not be equal to contractAddress when requesting reencryption!");
   });
 
