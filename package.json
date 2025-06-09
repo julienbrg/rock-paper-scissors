@@ -1,6 +1,6 @@
 {
   "name": "rock-paper-scissors",
-  "description": "Privacy-first on-chain Rock Paper Scissors game",
+  "description": "Privacy-preserving on-chain Rock-Paper-Scissors game",
   "version": "0.1.0",
   "engines": {
     "node": ">=18.0.0"
