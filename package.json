@@ -1,13 +1,9 @@
 {
-  "name": "@zama-ai/fhevm-hardhat-template",
-  "description": "fhEVM hardhat template",
-  "version": "1.0.0",
+  "name": "rock-paper-scissors",
+  "description": "Privacy-first on-chain Rock Paper Scissors game",
+  "version": "0.1.0",
   "engines": {
-    "node": ">=20.0.0"
-  },
-  "author": {
-    "name": "zama-ai",
-    "url": "https://github.com/zama-ai"
+    "node": ">=18.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
