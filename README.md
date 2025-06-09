@@ -12,6 +12,10 @@ pnpm i
 pnpm test:game
 ```
 
+## Credits
+
+This repo was forked from [Zama Hardhat template](https://github.com/zama-ai/fhevm-hardhat-template), I want to thank [all its contributors](https://github.com/zama-ai/fhevm-hardhat-template/graphs/contributors).
+
 ## Support
 
 Feel free to reach out to [Julien](https://github.com/julienbrg) on [Farcaster](https://warpcast.com/julien-),
