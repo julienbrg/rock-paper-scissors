@@ -1,342 +1,387 @@
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { expect } from "chai";
+import { FhevmInstance } from "fhevmjs/node";
 import { ethers } from "hardhat";
 
 import { Game } from "../../types";
+import { createInstance } from "../instance";
+import { getSigners, initSigners } from "../signers";
 
 describe("Game", function () {
   let game: Game;
   let player1: HardhatEthersSigner;
   let player2: HardhatEthersSigner;
   let nonPlayer: HardhatEthersSigner;
+  let contractAddress: string;
+  let fhevm: FhevmInstance;
+
+  before(async function () {
+    await initSigners();
+  });
 
   beforeEach(async function () {
-    [player1, player2, nonPlayer] = await ethers.getSigners();
+    const signers = await getSigners();
+    player1 = signers.alice;
+    player2 = signers.bob;
+    nonPlayer = signers.carol;
+
     const GameFactory = await ethers.getContractFactory("Game");
     game = await GameFactory.deploy(player1.address, player2.address);
     await game.waitForDeployment();
+    contractAddress = await game.getAddress();
+    fhevm = await createInstance();
   });
 
-  describe("Deployment", function () {
-    it("Should set the right players", async function () {
+  describe("Game initialization", function () {
+    it("should initialize with correct players", async function () {
       expect(await game.player1()).to.equal(player1.address);
       expect(await game.player2()).to.equal(player2.address);
-    });
-
-    it("Should initialize game state correctly", async function () {
       expect(await game.currentRound()).to.equal(1);
-      expect(await game.player1Wins()).to.equal(0);
-      expect(await game.player2Wins()).to.equal(0);
       expect(await game.gameOver()).to.equal(false);
-      expect(await game.winner()).to.equal(ethers.ZeroAddress);
-    });
-  });
-
-  describe("Valid Moves", function () {
-    it("Should allow player1 to make a valid move", async function () {
-      await expect(game.connect(player1).move(1)).to.emit(game, "MoveMade").withArgs(player1.address, 1, 1);
-
-      const [p1Move, p2Move] = await game.getRoundMoves(1);
-      expect(p1Move).to.equal(1);
-      expect(p2Move).to.equal(0);
-    });
-
-    it("Should allow player2 to make a valid move", async function () {
-      await expect(game.connect(player2).move(2)).to.emit(game, "MoveMade").withArgs(player2.address, 1, 2);
-
-      const [p1Move, p2Move] = await game.getRoundMoves(1);
-      expect(p1Move).to.equal(0);
-      expect(p2Move).to.equal(2);
-    });
-
-    it("Should process round when both players move", async function () {
-      await game.connect(player1).move(1); // Rock
-
-      await expect(game.connect(player2).move(2)) // Paper beats Rock
-        .to.emit(game, "RoundCompleted")
-        .withArgs(1, 1, 2, player2.address);
-
-      expect(await game.player1Wins()).to.equal(0);
-      expect(await game.player2Wins()).to.equal(1);
-      expect(await game.currentRound()).to.equal(2);
-    });
-  });
-
-  describe("Invalid Moves", function () {
-    it("Should revert for invalid move values", async function () {
-      await expect(game.connect(player1).move(0)).to.be.revertedWithCustomError(game, "InvalidMove").withArgs(0);
-
-      await expect(game.connect(player1).move(4)).to.be.revertedWithCustomError(game, "InvalidMove").withArgs(4);
-    });
-
-    it("Should revert when non-player tries to move", async function () {
-      await expect(game.connect(nonPlayer).move(1))
-        .to.be.revertedWithCustomError(game, "NotAPlayer")
-        .withArgs(nonPlayer.address);
-    });
-
-    it("Should revert when player tries to move twice in same round", async function () {
-      await game.connect(player1).move(1);
-
-      await expect(game.connect(player1).move(2))
-        .to.be.revertedWithCustomError(game, "AlreadyMoved")
-        .withArgs(player1.address, 1);
-    });
-
-    it("Should revert when game is already over", async function () {
-      // Play a complete game - player1 wins 2-0
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(3); // Scissors - player1 wins round 1
-
-      await game.connect(player1).move(2); // Paper
-      await game.connect(player2).move(1); // Rock - player1 wins round 2 and game
-
-      expect(await game.gameOver()).to.equal(true);
-      expect(await game.winner()).to.equal(player1.address);
-
-      // Try to make another move
-      await expect(game.connect(player1).move(1)).to.be.revertedWithCustomError(game, "GameAlreadyOver");
-    });
-  });
-
-  describe("Game Logic - Rock Paper Scissors Rules", function () {
-    it("Rock should beat Scissors", async function () {
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(3); // Scissors
-
-      expect(await game.player1Wins()).to.equal(1);
-      expect(await game.player2Wins()).to.equal(0);
-    });
-
-    it("Paper should beat Rock", async function () {
-      await game.connect(player1).move(2); // Paper
-      await game.connect(player2).move(1); // Rock
-
-      expect(await game.player1Wins()).to.equal(1);
-      expect(await game.player2Wins()).to.equal(0);
-    });
-
-    it("Scissors should beat Paper", async function () {
-      await game.connect(player1).move(3); // Scissors
-      await game.connect(player2).move(2); // Paper
-
-      expect(await game.player1Wins()).to.equal(1);
-      expect(await game.player2Wins()).to.equal(0);
-    });
-
-    it("Should handle tie rounds correctly", async function () {
-      await expect(game.connect(player1).move(1)) // Rock
-        .to.emit(game, "MoveMade")
-        .withArgs(player1.address, 1, 1);
-
-      await expect(game.connect(player2).move(1)) // Rock
-        .to.emit(game, "RoundCompleted")
-        .withArgs(1, 1, 1, ethers.ZeroAddress); // No winner (tie)
-
       expect(await game.player1Wins()).to.equal(0);
       expect(await game.player2Wins()).to.equal(0);
-      expect(await game.currentRound()).to.equal(2); // Moves to next round
-    });
-  });
-
-  describe("Complete Games", function () {
-    it("Should end game when player1 wins 2 rounds", async function () {
-      // Round 1: Player1 wins
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(3); // Scissors
-
-      // Round 2: Player1 wins and game ends
-      await game.connect(player1).move(2); // Paper
-
-      await expect(game.connect(player2).move(1)) // Rock
-        .to.emit(game, "GameEnded")
-        .withArgs(player1.address, 2, 0);
-
-      expect(await game.gameOver()).to.equal(true);
-      expect(await game.winner()).to.equal(player1.address);
-      expect(await game.player1Wins()).to.equal(2);
-      expect(await game.player2Wins()).to.equal(0);
     });
 
-    it("Should end game when player2 wins 2 rounds", async function () {
-      // Round 1: Player2 wins
-      await game.connect(player1).move(3); // Scissors
-      await game.connect(player2).move(1); // Rock
-
-      // Round 2: Player2 wins and game ends
-      await game.connect(player1).move(1); // Rock
-
-      await expect(game.connect(player2).move(2)) // Paper
-        .to.emit(game, "GameEnded")
-        .withArgs(player2.address, 0, 2);
-
-      expect(await game.gameOver()).to.equal(true);
-      expect(await game.winner()).to.equal(player2.address);
-      expect(await game.player1Wins()).to.equal(0);
-      expect(await game.player2Wins()).to.equal(2);
-    });
-
-    it("Should handle complete game with multiple rounds including ties", async function () {
-      // Round 1: Tie
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(1); // Rock
-
-      // Round 2: Player1 wins
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(3); // Scissors
-
-      // Round 3: Tie
-      await game.connect(player1).move(2); // Paper
-      await game.connect(player2).move(2); // Paper
-
-      // Round 4: Player2 wins
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(2); // Paper
-
-      // Round 5: Player1 wins and game ends
-      await game.connect(player1).move(3); // Scissors
-      await game.connect(player2).move(2); // Paper
-
-      expect(await game.gameOver()).to.equal(true);
-      expect(await game.winner()).to.equal(player1.address);
-      expect(await game.player1Wins()).to.equal(2);
-      expect(await game.player2Wins()).to.equal(1);
-    });
-  });
-
-  describe("View Functions", function () {
-    it("Should return correct game state", async function () {
+    it("should return correct initial game state", async function () {
       const [p1Wins, p2Wins, currentRound, gameOver, winner] = await game.getGameState();
-
       expect(p1Wins).to.equal(0);
       expect(p2Wins).to.equal(0);
       expect(currentRound).to.equal(1);
       expect(gameOver).to.equal(false);
       expect(winner).to.equal(ethers.ZeroAddress);
     });
+  });
 
-    it("Should return correct round moves", async function () {
-      await game.connect(player1).move(1);
+  describe("Making moves", function () {
+    it("should allow valid players to make encrypted moves", async function () {
+      const input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1); // Rock
+      const encryptedMove1 = await input1.encrypt();
 
-      let [p1Move, p2Move] = await game.getRoundMoves(1);
-      expect(p1Move).to.equal(1);
-      expect(p2Move).to.equal(0);
+      const tx1 = await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+      await expect(tx1).to.emit(game, "EncryptedMoveMade").withArgs(player1.address, 1);
 
-      await game.connect(player2).move(2);
+      expect(await game.player1HasMoved(1)).to.equal(true);
+      expect(await game.player2HasMoved(1)).to.equal(false);
 
-      [p1Move, p2Move] = await game.getRoundMoves(1);
-      expect(p1Move).to.equal(1);
-      expect(p2Move).to.equal(2);
+      const input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(2); // Paper
+      const encryptedMove2 = await input2.encrypt();
+
+      const tx2 = await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+      await expect(tx2).to.emit(game, "EncryptedMoveMade").withArgs(player2.address, 1);
+
+      expect(await game.player2HasMoved(1)).to.equal(true);
+      expect(await game.haveBothPlayersMoved(1)).to.equal(true);
     });
 
-    it("Should return zero for unplayed rounds", async function () {
-      const [p1Move, p2Move] = await game.getRoundMoves(5);
-      expect(p1Move).to.equal(0);
-      expect(p2Move).to.equal(0);
+    it("should emit RoundReady when both players have moved", async function () {
+      const input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1); // Rock
+      const encryptedMove1 = await input1.encrypt();
+
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      const input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(2); // Paper
+      const encryptedMove2 = await input2.encrypt();
+
+      await expect(game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof))
+        .to.emit(game, "RoundReady")
+        .withArgs(1);
+    });
+
+    it("should reject moves from non-players", async function () {
+      const input = fhevm.createEncryptedInput(contractAddress, nonPlayer.address);
+      input.add8(1); // Rock
+      const encryptedMove = await input.encrypt();
+
+      await expect(game.connect(nonPlayer).move(encryptedMove.handles[0], encryptedMove.inputProof))
+        .to.be.revertedWithCustomError(game, "NotAPlayer")
+        .withArgs(nonPlayer.address);
+    });
+
+    it("should reject duplicate moves from same player in same round", async function () {
+      const input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1); // Rock
+      const encryptedMove1 = await input1.encrypt();
+
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      const input2 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input2.add8(2); // Paper
+      const encryptedMove2 = await input2.encrypt();
+
+      await expect(game.connect(player1).move(encryptedMove2.handles[0], encryptedMove2.inputProof))
+        .to.be.revertedWithCustomError(game, "AlreadyMoved")
+        .withArgs(player1.address, 1);
+    });
+
+    it("should reject moves when game is over", async function () {
+      // Round 1: Both players make moves, then set result
+      const input1Round1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1Round1.add8(1);
+      const encryptedMove1Round1 = await input1Round1.encrypt();
+      await game.connect(player1).move(encryptedMove1Round1.handles[0], encryptedMove1Round1.inputProof);
+
+      const input2Round1 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2Round1.add8(3);
+      const encryptedMove2Round1 = await input2Round1.encrypt();
+      await game.connect(player2).move(encryptedMove2Round1.handles[0], encryptedMove2Round1.inputProof);
+
+      await game.connect(player1).setRoundResult(1, 1); // Player1 wins round 1
+
+      // Round 2: Both players make moves, then set result to end game
+      const input1Round2 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1Round2.add8(1);
+      const encryptedMove1Round2 = await input1Round2.encrypt();
+      await game.connect(player1).move(encryptedMove1Round2.handles[0], encryptedMove1Round2.inputProof);
+
+      const input2Round2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2Round2.add8(3);
+      const encryptedMove2Round2 = await input2Round2.encrypt();
+      await game.connect(player2).move(encryptedMove2Round2.handles[0], encryptedMove2Round2.inputProof);
+
+      await game.connect(player1).setRoundResult(2, 1); // Player1 wins round 2, game is now over
+
+      // Verify game is over
+      expect(await game.gameOver()).to.equal(true);
+
+      // Try to make move in next round - should fail
+      const input = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input.add8(1);
+      const encryptedMove = await input.encrypt();
+
+      await expect(
+        game.connect(player1).move(encryptedMove.handles[0], encryptedMove.inputProof),
+      ).to.be.revertedWithCustomError(game, "GameAlreadyOver");
     });
   });
 
-  describe("Events", function () {
-    it("Should emit MoveMade event correctly", async function () {
-      await expect(game.connect(player1).move(1)).to.emit(game, "MoveMade").withArgs(player1.address, 1, 1);
+  describe("Getting encrypted moves", function () {
+    it("should allow players to view their own encrypted moves", async function () {
+      const input = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input.add8(1); // Rock
+      const encryptedMove = await input.encrypt();
 
-      await expect(game.connect(player2).move(2)).to.emit(game, "MoveMade").withArgs(player2.address, 1, 2);
+      await game.connect(player1).move(encryptedMove.handles[0], encryptedMove.inputProof);
+
+      const retrievedMove = await game.connect(player1).getMyEncryptedMove(1);
+      expect(retrievedMove).to.not.equal(0);
     });
 
-    it("Should emit RoundCompleted event with winner", async function () {
-      await game.connect(player1).move(1); // Rock
+    it("should reject viewing encrypted moves from non-players", async function () {
+      const input = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input.add8(1); // Rock
+      const encryptedMove = await input.encrypt();
 
-      await expect(game.connect(player2).move(3)) // Scissors
-        .to.emit(game, "RoundCompleted")
-        .withArgs(1, 1, 3, player1.address);
+      await game.connect(player1).move(encryptedMove.handles[0], encryptedMove.inputProof);
+
+      await expect(game.connect(nonPlayer).getMyEncryptedMove(1))
+        .to.be.revertedWithCustomError(game, "NotAPlayer")
+        .withArgs(nonPlayer.address);
     });
 
-    it("Should emit RoundCompleted event with no winner for ties", async function () {
-      await game.connect(player1).move(1); // Rock
+    it("should reject viewing encrypted moves if player hasn't moved", async function () {
+      await expect(game.connect(player1).getMyEncryptedMove(1)).to.be.revertedWith(
+        "Player 1 hasn't moved in this round",
+      );
+    });
+  });
 
-      await expect(game.connect(player2).move(1)) // Rock
-        .to.emit(game, "RoundCompleted")
-        .withArgs(1, 1, 1, ethers.ZeroAddress);
+  describe("Setting round results", function () {
+    beforeEach(async function () {
+      // Both players make moves for round 1
+      const input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1); // Rock
+      const encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      const input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(2); // Paper
+      const encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
     });
 
-    it("Should emit GameEnded event when game finishes", async function () {
-      // Win first round
-      await game.connect(player1).move(1); // Rock
-      await game.connect(player2).move(3); // Scissors
+    it("should set round result and update wins correctly", async function () {
+      await expect(game.connect(player1).setRoundResult(1, 2)).to.emit(game, "RoundCompleted").withArgs(1, 2);
 
-      // Win second round and game
-      await game.connect(player1).move(2); // Paper
+      expect(await game.getRoundResult(1)).to.equal(2);
+      expect(await game.player2Wins()).to.equal(1);
+      expect(await game.player1Wins()).to.equal(0);
+    });
 
-      await expect(game.connect(player2).move(1)) // Rock
+    it("should handle tie results", async function () {
+      await game.connect(player1).setRoundResult(1, 3); // Tie
+
+      expect(await game.getRoundResult(1)).to.equal(3);
+      expect(await game.player1Wins()).to.equal(0);
+      expect(await game.player2Wins()).to.equal(0);
+    });
+
+    it("should end game when player reaches 2 wins", async function () {
+      await game.connect(player1).setRoundResult(1, 1); // Player1 wins
+      expect(await game.gameOver()).to.equal(false);
+
+      // Round 2
+      const input1Round2 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1Round2.add8(1);
+      const encryptedMove1Round2 = await input1Round2.encrypt();
+      await game.connect(player1).move(encryptedMove1Round2.handles[0], encryptedMove1Round2.inputProof);
+
+      const input2Round2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2Round2.add8(3);
+      const encryptedMove2Round2 = await input2Round2.encrypt();
+      await game.connect(player2).move(encryptedMove2Round2.handles[0], encryptedMove2Round2.inputProof);
+
+      await expect(game.connect(player1).setRoundResult(2, 1))
         .to.emit(game, "GameEnded")
         .withArgs(player1.address, 2, 0);
-    });
-  });
-
-  describe("Edge Cases", function () {
-    it("Should handle all possible move combinations", async function () {
-      const moves = [1, 2, 3]; // Rock, Paper, Scissors
-      const results = [
-        [0, 2, 1], // Rock vs [Rock, Paper, Scissors] -> [Tie, Lose, Win]
-        [1, 0, 2], // Paper vs [Rock, Paper, Scissors] -> [Win, Tie, Lose]
-        [2, 1, 0], // Scissors vs [Rock, Paper, Scissors] -> [Lose, Win, Tie]
-      ];
-
-      for (let i = 0; i < moves.length; i++) {
-        for (let j = 0; j < moves.length; j++) {
-          // Deploy fresh contract for each test
-          const GameFactory = await ethers.getContractFactory("Game");
-          const testGame = await GameFactory.deploy(player1.address, player2.address);
-
-          await testGame.connect(player1).move(moves[i]);
-          await testGame.connect(player2).move(moves[j]);
-
-          const p1Wins = await testGame.player1Wins();
-          const p2Wins = await testGame.player2Wins();
-
-          if (results[i][j] === 0) {
-            // Tie
-            expect(p1Wins).to.equal(0);
-            expect(p2Wins).to.equal(0);
-          } else if (results[i][j] === 1) {
-            // Player 1 wins
-            expect(p1Wins).to.equal(1);
-            expect(p2Wins).to.equal(0);
-          } else {
-            // Player 2 wins
-            expect(p1Wins).to.equal(0);
-            expect(p2Wins).to.equal(1);
-          }
-        }
-      }
-    });
-
-    it("Should handle maximum rounds scenario", async function () {
-      // Play maximum possible rounds (alternating wins with ties)
-      // This could theoretically go on forever with ties, but let's test a reasonable scenario
-
-      // Tie, P1 win, Tie, P2 win, P1 win (5 rounds total)
-      const roundMoves = [
-        [1, 1], // Tie
-        [1, 3], // P1 wins
-        [2, 2], // Tie
-        [1, 2], // P2 wins
-        [3, 2], // P1 wins - game ends
-      ];
-
-      for (let i = 0; i < roundMoves.length; i++) {
-        await game.connect(player1).move(roundMoves[i][0]);
-        await game.connect(player2).move(roundMoves[i][1]);
-
-        if (i < roundMoves.length - 1) {
-          expect(await game.gameOver()).to.equal(false);
-        }
-      }
 
       expect(await game.gameOver()).to.equal(true);
       expect(await game.winner()).to.equal(player1.address);
-      expect(await game.player1Wins()).to.equal(2);
-      expect(await game.player2Wins()).to.equal(1);
+    });
+
+    it("should reject invalid result values", async function () {
+      await expect(game.connect(player1).setRoundResult(1, 0)).to.be.revertedWith("Invalid result");
+
+      await expect(game.connect(player1).setRoundResult(1, 4)).to.be.revertedWith("Invalid result");
+    });
+
+    it("should reject setting result twice for same round", async function () {
+      await game.connect(player1).setRoundResult(1, 1);
+
+      await expect(game.connect(player1).setRoundResult(1, 2)).to.be.revertedWith("Round already processed");
+    });
+
+    it("should reject setting result if both players haven't moved", async function () {
+      // Start a new round without both players moving
+      await game.connect(player1).setRoundResult(1, 3); // Tie to advance to round 2
+
+      await expect(game.connect(player1).setRoundResult(2, 1)).to.be.revertedWith("Both players must move first");
+    });
+
+    it("should reject non-players setting results", async function () {
+      await expect(game.connect(nonPlayer).setRoundResult(1, 1)).to.be.revertedWith("Only players can set result");
+    });
+  });
+
+  describe("Full game scenarios", function () {
+    it("should play a complete best-of-3 game", async function () {
+      // Round 1: Player 1 wins
+      let input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1);
+      let encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      let input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(3);
+      let encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await game.connect(player1).setRoundResult(1, 1);
+
+      const gameState1 = await game.getGameState();
+      expect(gameState1[0]).to.equal(1); // player1Wins
+      expect(gameState1[1]).to.equal(0); // player2Wins
+      expect(gameState1[2]).to.equal(2); // currentRound
+      expect(gameState1[3]).to.equal(false); // gameOver
+
+      // Round 2: Player 2 wins
+      input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(3);
+      encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(1);
+      encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await game.connect(player1).setRoundResult(2, 2);
+
+      const gameState2 = await game.getGameState();
+      expect(gameState2[0]).to.equal(1); // player1Wins
+      expect(gameState2[1]).to.equal(1); // player2Wins
+      expect(gameState2[2]).to.equal(3); // currentRound
+      expect(gameState2[3]).to.equal(false); // gameOver
+
+      // Round 3: Player 1 wins and wins the game
+      input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(2);
+      encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(1);
+      encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await expect(game.connect(player1).setRoundResult(3, 1))
+        .to.emit(game, "GameEnded")
+        .withArgs(player1.address, 2, 1);
+
+      const finalGameState = await game.getGameState();
+      expect(finalGameState[0]).to.equal(2); // player1Wins
+      expect(finalGameState[1]).to.equal(1); // player2Wins
+      expect(finalGameState[2]).to.equal(3); // currentRound
+      expect(finalGameState[3]).to.equal(true); // gameOver
+      expect(finalGameState[4]).to.equal(player1.address); // winner
+    });
+
+    it("should handle game with ties", async function () {
+      // Round 1: Tie
+      let input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1);
+      let encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      let input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(1);
+      let encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await game.connect(player1).setRoundResult(1, 3); // Tie
+
+      let gameState = await game.getGameState();
+      expect(gameState[0]).to.equal(0); // player1Wins
+      expect(gameState[1]).to.equal(0); // player2Wins
+      expect(gameState[2]).to.equal(2); // currentRound advances
+      expect(gameState[3]).to.equal(false); // gameOver
+
+      // Round 2: Player 1 wins
+      input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(1);
+      encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(3);
+      encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await game.connect(player1).setRoundResult(2, 1);
+
+      gameState = await game.getGameState();
+      expect(gameState[0]).to.equal(1); // player1Wins
+      expect(gameState[1]).to.equal(0); // player2Wins
+
+      // Round 3: Player 1 wins again to win the game
+      input1 = fhevm.createEncryptedInput(contractAddress, player1.address);
+      input1.add8(2);
+      encryptedMove1 = await input1.encrypt();
+      await game.connect(player1).move(encryptedMove1.handles[0], encryptedMove1.inputProof);
+
+      input2 = fhevm.createEncryptedInput(contractAddress, player2.address);
+      input2.add8(1);
+      encryptedMove2 = await input2.encrypt();
+      await game.connect(player2).move(encryptedMove2.handles[0], encryptedMove2.inputProof);
+
+      await game.connect(player1).setRoundResult(3, 1);
+
+      const finalGameState = await game.getGameState();
+      expect(finalGameState[3]).to.equal(true); // gameOver
+      expect(finalGameState[4]).to.equal(player1.address); // winner
     });
   });
 });

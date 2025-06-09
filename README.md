@@ -1,9 +1,10 @@
 # Rock Paper Scissors
 
-On-chain Rock Paper Scissors game.
+Privacy-preserving on-chain Rock Paper Scissors game.
 
 - [Main contract](https://github.com/julienbrg/rock-paper-scissors/blob/main/contracts/Game.sol)
 - [Zama docs](https://docs.zama.ai/homepage)
+- [Integration guide](https://hackmd.io/@5UdmtMauTraZONn6Pp00eQ/rock-paper-scissors)
 
 ### Install
 

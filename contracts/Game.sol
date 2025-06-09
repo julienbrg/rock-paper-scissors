@@ -2,14 +2,17 @@
 
 pragma solidity ^0.8.24;
 
+import "fhevm/lib/TFHE.sol";
+import "fhevm/config/ZamaFHEVMConfig.sol";
+
 /**
  * @title Game
- * @author Your Name
- * @notice A Rock-Paper-Scissors game contract
+ * @notice A privacy-preserving Rock-Paper-Scissors game contract using FHE
  * @dev Best of 3 rounds game where first player to win 2 rounds wins the game
  * Move encoding: 1 = Rock, 2 = Paper, 3 = Scissors
+ * All moves are encrypted and only outcomes are revealed
  */
-contract Game {
+contract Game is SepoliaZamaFHEVMConfig {
     /// @notice Address of player 1
     address public player1;
 
@@ -25,41 +28,54 @@ contract Game {
     /// @notice Current round number (starts at 1)
     uint8 public currentRound;
 
-    /// @notice Mapping of round number to player 1's move
-    mapping(uint8 => uint8) public player1Moves;
-
-    /// @notice Mapping of round number to player 2's move
-    mapping(uint8 => uint8) public player2Moves;
-
     /// @notice Whether the game has ended
     bool public gameOver;
 
     /// @notice Address of the winner (only set when game is over)
     address public winner;
 
+    /// @notice Mapping of round number to player 1's encrypted move
+    mapping(uint8 => euint8) private player1EncryptedMoves;
+
+    /// @notice Mapping of round number to player 2's encrypted move
+    mapping(uint8 => euint8) private player2EncryptedMoves;
+
+    /// @notice Mapping of round number to whether player 1 has moved
+    mapping(uint8 => bool) public player1HasMoved;
+
+    /// @notice Mapping of round number to whether player 2 has moved
+    mapping(uint8 => bool) public player2HasMoved;
+
+    /// @notice Mapping of round number to round results (0 = pending, 1 = player1 wins, 2 = player2 wins, 3 = tie)
+    mapping(uint8 => uint8) public roundResults;
+
     // Custom Errors
     error GameAlreadyOver();
-    error InvalidMove(uint8 move);
+    error InvalidMove();
     error NotAPlayer(address caller);
     error AlreadyMoved(address player, uint8 round);
+    error BothPlayersNotMoved();
 
     // Events
     /**
-     * @notice Emitted when a player makes a move
+     * @notice Emitted when a player makes an encrypted move
      * @param player The address of the player
      * @param round The round number
-     * @param move The move made (1=Rock, 2=Paper, 3=Scissors)
      */
-    event MoveMade(address indexed player, uint8 indexed round, uint8 move);
+    event EncryptedMoveMade(address indexed player, uint8 indexed round);
+
+    /**
+     * @notice Emitted when both players have moved and round can be processed
+     * @param round The round number
+     */
+    event RoundReady(uint8 indexed round);
 
     /**
      * @notice Emitted when a round is completed
      * @param round The completed round number
-     * @param player1Move Player 1's move
-     * @param player2Move Player 2's move
-     * @param roundWinner Address of round winner (address(0) for tie)
+     * @param result Round result (1=player1 wins, 2=player2 wins, 3=tie)
      */
-    event RoundCompleted(uint8 indexed round, uint8 player1Move, uint8 player2Move, address indexed roundWinner);
+    event RoundCompleted(uint8 indexed round, uint8 result);
 
     /**
      * @notice Emitted when the game ends
@@ -81,56 +97,59 @@ contract Game {
     }
 
     /**
-     * @notice Make a move in the current round
-     * @param _move The move to make (1=Rock, 2=Paper, 3=Scissors)
-     * @dev Both players must make a move before the round is processed
+     * @notice Make an encrypted move in the current round
+     * @param encryptedMove The encrypted move (1=Rock, 2=Paper, 3=Scissors)
+     * @param inputProof The input proof for the encrypted move
+     * @dev Both players must make a move before the round can be processed
      */
-    function move(uint8 _move) public {
+    function move(einput encryptedMove, bytes calldata inputProof) public {
         if (gameOver) revert GameAlreadyOver();
-        if (_move < 1 || _move > 3) revert InvalidMove(_move);
         if (msg.sender != player1 && msg.sender != player2) revert NotAPlayer(msg.sender);
 
         if (msg.sender == player1) {
-            if (player1Moves[currentRound] != 0) revert AlreadyMoved(msg.sender, currentRound);
-            player1Moves[currentRound] = _move;
+            if (player1HasMoved[currentRound]) revert AlreadyMoved(msg.sender, currentRound);
+
+            // Convert encrypted input to euint8 using the available function
+            player1EncryptedMoves[currentRound] = TFHE.asEuint8(encryptedMove, inputProof);
+            player1HasMoved[currentRound] = true;
         } else {
-            if (player2Moves[currentRound] != 0) revert AlreadyMoved(msg.sender, currentRound);
-            player2Moves[currentRound] = _move;
+            if (player2HasMoved[currentRound]) revert AlreadyMoved(msg.sender, currentRound);
+
+            player2EncryptedMoves[currentRound] = TFHE.asEuint8(encryptedMove, inputProof);
+            player2HasMoved[currentRound] = true;
         }
 
-        emit MoveMade(msg.sender, currentRound, _move);
+        emit EncryptedMoveMade(msg.sender, currentRound);
 
-        if (player1Moves[currentRound] != 0 && player2Moves[currentRound] != 0) {
-            processRound();
+        // If both players have moved, round is ready for processing
+        if (player1HasMoved[currentRound] && player2HasMoved[currentRound]) {
+            emit RoundReady(currentRound);
         }
     }
 
     /**
-     * @notice Process the current round and determine the winner
-     * @dev Internal function called when both players have made their moves
-     * Rock beats Scissors, Paper beats Rock, Scissors beats Paper
+     * @notice Set round result manually (for testing/demo purposes)
+     * @param round The round number
+     * @param result The result (1=player1 wins, 2=player2 wins, 3=tie)
+     * @dev In a full implementation, this would be done via FHE computation and Gateway decryption
      */
-    function processRound() internal {
-        uint8 p1Move = player1Moves[currentRound];
-        uint8 p2Move = player2Moves[currentRound];
-        address roundWinner = address(0);
+    function setRoundResult(uint8 round, uint8 result) public {
+        require(msg.sender == player1 || msg.sender == player2, "Only players can set result");
+        require(result >= 1 && result <= 3, "Invalid result");
+        require(roundResults[round] == 0, "Round already processed");
+        require(player1HasMoved[round] && player2HasMoved[round], "Both players must move first");
 
-        if (p1Move == p2Move) {
-            // Tie - no winner
-        } else if (
-            (p1Move == 1 && p2Move == 3) || // Rock beats Scissors
-            (p1Move == 2 && p2Move == 1) || // Paper beats Rock
-            (p1Move == 3 && p2Move == 2) // Scissors beats Paper
-        ) {
+        roundResults[round] = result;
+
+        if (result == 1) {
             player1Wins++;
-            roundWinner = player1;
-        } else {
+        } else if (result == 2) {
             player2Wins++;
-            roundWinner = player2;
         }
 
-        emit RoundCompleted(currentRound, p1Move, p2Move, roundWinner);
+        emit RoundCompleted(round, result);
 
+        // Check if game is over
         if (player1Wins == 2) {
             gameOver = true;
             winner = player1;
@@ -139,7 +158,7 @@ contract Game {
             gameOver = true;
             winner = player2;
             emit GameEnded(player2, player1Wins, player2Wins);
-        } else {
+        } else if (round == currentRound) {
             currentRound++;
         }
     }
@@ -161,12 +180,37 @@ contract Game {
     }
 
     /**
-     * @notice Get moves for a specific round
+     * @notice Get the result of a specific round
      * @param round The round number to query
-     * @return player1Move Player 1's move for the round (0 if not made)
-     * @return player2Move Player 2's move for the round (0 if not made)
+     * @return result Round result (0=pending, 1=player1 wins, 2=player2 wins, 3=tie)
      */
-    function getRoundMoves(uint8 round) public view returns (uint8 player1Move, uint8 player2Move) {
-        return (player1Moves[round], player2Moves[round]);
+    function getRoundResult(uint8 round) public view returns (uint8 result) {
+        return roundResults[round];
+    }
+
+    /**
+     * @notice Check if both players have moved in a specific round
+     * @param round The round number to check
+     * @return bothMoved Whether both players have made their moves
+     */
+    function haveBothPlayersMoved(uint8 round) public view returns (bool bothMoved) {
+        return player1HasMoved[round] && player2HasMoved[round];
+    }
+
+    /**
+     * @notice Allow a player to view their own encrypted move for a round (for verification)
+     * @param round The round number
+     * @return encryptedMove The player's encrypted move for that round
+     */
+    function getMyEncryptedMove(uint8 round) public view returns (euint8 encryptedMove) {
+        if (msg.sender == player1) {
+            require(player1HasMoved[round], "Player 1 hasn't moved in this round");
+            return player1EncryptedMoves[round];
+        } else if (msg.sender == player2) {
+            require(player2HasMoved[round], "Player 2 hasn't moved in this round");
+            return player2EncryptedMoves[round];
+        } else {
+            revert NotAPlayer(msg.sender);
+        }
     }
 }
